@@ -1,4 +1,4 @@
-# Enterprise IT Support Agentic RAG Copilot
+# IT Support Agentic RAG Copilot
 
 An IT support assistant that answers employee questions from a private company knowledge base, falls back to web search only when internal evidence is weak, and shows every decision it makes.
 
