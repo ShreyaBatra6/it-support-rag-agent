@@ -1,6 +1,6 @@
 # Enterprise IT Support Agentic RAG Copilot
 
-An end-to-end **Forward Deployed Engineer (FDE) project** that turns a notebook-style Agentic RAG workflow into a deployable internal product using **LangGraph, FastAPI, Pinecone, Groq, Tavily, HTML, CSS, and JavaScript**.
+An end-to-end **Forward Deployed Engineer (FDE) project** that turns a notebook-style Agentic RAG workflow into a deployable internal product using **LangGraph, FastAPI, Pinecone, OpenAI, Tavily, HTML, CSS, and JavaScript**.
 
 ---
 
@@ -111,7 +111,7 @@ This repository demonstrates each layer.
                └──────────────┬──────────────┘
                               ▼
                      ┌────────────────┐
-                     │ Groq LLM       │
+                     │ OpenAI LLM     │
                      │ Grounded Answer│
                      └────────────────┘
 ```
@@ -146,11 +146,9 @@ Generate from KB    [4] Tavily Web Search
                     ▼          ▼
               Generate Web  [6] Rewrite Query
                                ↓
-                         Retry Private KB
+                    Retry from [2] (max 1 retry)
                                ↓
-                        Max retry reached?
-                               ↓
-                    Insufficient Evidence
+              Still weak after retry → Insufficient Evidence
 ```
 
 ### Why Agentic?
@@ -183,8 +181,8 @@ The system therefore controls **what to do next** based on its current state.
 | Layer | Technology | Purpose |
 |---|---|---|
 | Agent workflow | LangGraph | Stateful routing and conditional decisions |
-| LLM | Groq | Routing, grading, rewriting, answer generation |
-| Embeddings | HuggingFace `all-MiniLM-L6-v2` | Local 384-dimensional embeddings |
+| LLM | OpenAI `gpt-4o-mini` | Routing, grading, rewriting, answer generation |
+| Embeddings | OpenAI `text-embedding-3-small` | 1536-dimensional embeddings for documents and queries |
 | Vector DB | Pinecone | Private enterprise knowledge base |
 | External search | Tavily | Fallback when company KB is insufficient |
 | API | FastAPI | Backend and REST endpoints |
@@ -218,10 +216,14 @@ it-support-rag-agent/
 │   │
 │   └── main.py                    # FastAPI application
 │
+├── Agentic-RAG-demo/
+│   └── Agentic_RAG.ipynb          # Notebook version of the workflow
+│
 ├── data/
-│   └── sample_kb/
-│       ├── company_it_handbook.md
-│       └── service_desk_runbook.md
+│   ├── sample_kb/
+│   │   ├── company_it_handbook.md
+│   │   └── service_desk_runbook.md
+│   └── audit.db                   # Created automatically at runtime
 │
 ├── static/
 │   ├── css/style.css
@@ -230,15 +232,14 @@ it-support-rag-agent/
 ├── templates/
 │   └── index.html
 │
-├── tests/
-│   └── test_ingestion.py
-│
-├── uploads/
-├── .env.example
+├── uploads/                       # Uploaded documents (includes a sample PDF)
+├── .env                           # Your API keys (create it yourself, never commit)
+├── create_project.py              # Creates the folder skeleton
 ├── Dockerfile
-├── ingest_sample_kb.py
+├── ingest_sample_kb.py            # Loads data/sample_kb into Pinecone
 ├── requirements.txt
-├── run.py
+├── run.py                         # Starts the server on port 8080
+├── steps.md                       # Order in which the files are built
 └── README.md
 ```
 
@@ -248,9 +249,13 @@ it-support-rag-agent/
 
 ### Step 1 — Create virtual environment
 
+Requires **Python 3.10 or newer** (3.11 recommended, the same version the Dockerfile uses).
+
 ```bash
 python -m venv venv
 ```
+
+On Windows with several Python versions installed, pick 3.11 explicitly: `py -3.11 -m venv venv`.
 
 Windows:
 
@@ -275,9 +280,10 @@ pip install -r requirements.txt
 Create a `.env` file in the project root directory with the following variables:
 
 ```env
-# LLM API Keys
-GROQ_API_KEY=your_groq_api_key_here
+# OpenAI (LLM + embeddings)
 OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-4o-mini
+EMBEDDING_MODEL=text-embedding-3-small
 
 # External Search
 TAVILY_API_KEY=your_tavily_api_key_here
@@ -286,11 +292,6 @@ TAVILY_API_KEY=your_tavily_api_key_here
 PINECONE_API_KEY=your_pinecone_api_key_here
 PINECONE_INDEX_NAME=fde-it-support-rag
 PINECONE_NAMESPACE=company-it-kb
-
-# LLM Models
-GROQ_MODEL=openai/gpt-oss-20b
-OPENAI_MODEL=gpt-4o-mini
-EMBEDDING_MODEL=text-embedding-3-small
 
 # Security
 ADMIN_API_KEY=change-me-in-production
@@ -303,21 +304,21 @@ APP_ENV=development
 
 | Variable | Description | Example | Required |
 |---|---|---|---|
-| `GROQ_API_KEY` | API key for Groq LLM (routing, grading, generation) | `gsk_...` | ✅ Yes |
-| `OPENAI_API_KEY` | API key for OpenAI (embeddings and fallback LLM) | `sk-...` | ✅ Yes |
+| `OPENAI_API_KEY` | API key for OpenAI (LLM and embeddings). The account needs billing credit. | `sk-...` | ✅ Yes |
 | `TAVILY_API_KEY` | API key for Tavily web search | `tvly-...` | ✅ Yes |
-| `PINECONE_API_KEY` | API key for Pinecone vector database | `pckey-...` | ✅ Yes |
+| `PINECONE_API_KEY` | API key for Pinecone vector database | `pcsk_...` | ✅ Yes |
 | `PINECONE_INDEX_NAME` | Pinecone index name | `fde-it-support-rag` | ⚠️ Optional (default: `fde-it-support-rag`) |
 | `PINECONE_NAMESPACE` | Pinecone namespace for document isolation | `company-it-kb` | ⚠️ Optional (default: `company-it-kb`) |
-| `GROQ_MODEL` | Groq model identifier | `openai/gpt-oss-20b` | ⚠️ Optional (default: `openai/gpt-oss-20b`) |
-| `OPENAI_MODEL` | OpenAI model identifier | `gpt-4o-mini` | ⚠️ Optional (default: `gpt-4o-mini`) |
-| `EMBEDDING_MODEL` | Embedding model for vectorization | `text-embedding-3-small` | ⚠️ Optional (default: `text-embedding-3-small`) |
+| `OPENAI_MODEL` | OpenAI chat model used for every LLM step | `gpt-4o-mini` | ⚠️ Optional (default: `gpt-4o-mini`) |
+| `EMBEDDING_MODEL` | OpenAI embedding model | `text-embedding-3-small` | ⚠️ Optional (default: `text-embedding-3-small`) |
+| `TOP_K` | Number of chunks retrieved from Pinecone per query | `4` | ⚠️ Optional (default: `4`) |
+| `MAX_RETRIES` | How many times a weak query is rewritten and retried | `1` | ⚠️ Optional (default: `1`) |
 | `ADMIN_API_KEY` | Secret key for admin endpoints (document ingestion) | `your-secure-key` | ⚠️ Optional (default: `change-me`) |
 | `APP_ENV` | Application environment | `development` or `production` | ⚠️ Optional (default: `development`) |
 
 **⚠️ Important Security Notes:**
 
-- Never commit `.env` to version control. Add it to `.gitignore`.
+- Never commit `.env` to version control. It is already listed in `.gitignore`.
 - Change `ADMIN_API_KEY` to a secure random value in production.
 - Use environment variables instead of hardcoding secrets.
 - Restrict API key access to only the services that need them.
@@ -337,10 +338,16 @@ Load Documents
    ↓
 Chunk Text
    ↓
-HuggingFace Embeddings
+OpenAI Embeddings
    ↓
 Pinecone Vector Database
 ```
+
+Notes:
+
+- On the first run the Pinecone index is created automatically (1536 dimensions, cosine metric, AWS `us-east-1`, which works on Pinecone's free plan).
+- Run this script once. Running it again adds the same chunks a second time.
+- If you change `EMBEDDING_MODEL` to one with a different dimension, the existing index is deleted and recreated, and its contents are lost.
 
 ### Step 5 — Run the application
 
@@ -351,13 +358,13 @@ python run.py
 Open:
 
 ```text
-http://127.0.0.1:8000
+http://127.0.0.1:8080
 ```
 
 FastAPI API docs:
 
 ```text
-http://127.0.0.1:8000/docs
+http://127.0.0.1:8080/docs
 ```
 
 ---
@@ -527,15 +534,31 @@ Response contains:
     "KB evidence grade → GOOD",
     "Answer generation → PRIVATE KB"
   ],
-  "citations": []
+  "citations": [
+    {"title": "company_it_handbook.md", "url": "", "type": "private_kb"}
+  ],
+  "rewritten_query": "How do I reset my company password?"
 }
 ```
+
+`source_used` is one of `private_kb`, `web_search`, `direct` or `insufficient_evidence`. `rewritten_query` equals the original question unless the agent rewrote it.
 
 ### `POST /api/ingest`
 
 Protected by the `X-Admin-Key` request header.
 
-Uploads a document and adds its chunks to Pinecone.
+Uploads a document (`multipart/form-data`, field name `file`) and adds its chunks to Pinecone.
+
+Response:
+
+```json
+{
+  "message": "Document indexed",
+  "file": "vpn_policy.pdf",
+  "chunks": 3,
+  "ids_created": 3
+}
+```
 
 ---
 
